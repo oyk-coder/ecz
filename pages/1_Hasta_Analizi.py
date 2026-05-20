@@ -88,7 +88,15 @@ def aktif_ilaclar(hasta_id):
     key = _ilac_key(hasta_id)
     if key not in st.session_state:
         st.session_state[key] = list(get_hasta(hasta_id).aktif_ilaclar)
-    return st.session_state[key]
+    # dict olarak saklanmışsa Medication nesnesine çevir
+    result = []
+    for item in st.session_state[key]:
+        if isinstance(item, dict):
+            result.append(Medication(**item))
+        elif isinstance(item, Medication):
+            result.append(item)
+    st.session_state[key] = result
+    return result
  
 # ── Sidebar ───────────────────────────────────────────────────
  
@@ -171,24 +179,12 @@ with st.sidebar:
  
 # ── Aktif hasta + güncel ilaç listesi ────────────────────────
  
-pid     = st.session_state.selected_patient_id
-_base   = get_hasta(pid)
+pid      = st.session_state.selected_patient_id
+_base    = get_hasta(pid)
 _ilaclar = aktif_ilaclar(pid)
  
-patient = Patient(
-    hasta_id           = _base.hasta_id,
-    ad_soyad           = _base.ad_soyad,
-    yas                = _base.yas,
-    cinsiyet           = _base.cinsiyet,
-    kilo_kg            = _base.kilo_kg,
-    egfr               = _base.egfr,
-    albumin            = _base.albumin,
-    charlson_index     = _base.charlson_index,
-    morse_fall         = _base.morse_fall,
-    kronik_hastaliklar = _base.kronik_hastaliklar,
-    alerjiler          = _base.alerjiler,
-    aktif_ilaclar      = _ilaclar,
-)
+# model_copy ile sadece aktif_ilaclar alanını güncelle (Pydantic v2)
+patient  = _base.model_copy(update={"aktif_ilaclar": _ilaclar})
  
 # ── Hesaplamalar ──────────────────────────────────────────────
  
