@@ -24,6 +24,7 @@ from clinical_logic import (
 from data_utils import (
     FallRiskClass,
     Medication,
+    Patient,
     PATIENTS_DB,
     RiskLevel,
     get_patient,
@@ -32,30 +33,7 @@ from data_utils import (
  
 logger = logging.getLogger(__name__)
  
-# ── İlaç Kataloğu (Reçete Sekmesi için) ──────────────────────
- 
-ILAC_KATALOGU = [
-    {"isim": "Warfarin",         "atc": "B01AA03", "risk": FallRiskClass.CRITICAL},
-    {"isim": "Amlodipin",        "atc": "C08CA01", "risk": FallRiskClass.HIGH},
-    {"isim": "Metformin",        "atc": "A10BA02", "risk": FallRiskClass.LOW},
-    {"isim": "Enalapril",        "atc": "C09AA02", "risk": FallRiskClass.MODERATE},
-    {"isim": "Metoprolol",       "atc": "C07AB02", "risk": FallRiskClass.MODERATE},
-    {"isim": "Furosemid",        "atc": "C03CA01", "risk": FallRiskClass.HIGH},
-    {"isim": "Spironolakton",    "atc": "C03DA01", "risk": FallRiskClass.MODERATE},
-    {"isim": "Atorvastatin",     "atc": "C10AA05", "risk": FallRiskClass.LOW},
-    {"isim": "Omeprazol",        "atc": "A02BC01", "risk": FallRiskClass.LOW},
-    {"isim": "Metilprednizolon", "atc": "H02AB04", "risk": FallRiskClass.MODERATE},
-    {"isim": "Alprazolam",       "atc": "N05BA12", "risk": FallRiskClass.CRITICAL},
-    {"isim": "Zolpidem",         "atc": "N05CF02", "risk": FallRiskClass.CRITICAL},
-    {"isim": "Amitriptilin",     "atc": "N06AA09", "risk": FallRiskClass.CRITICAL},
-    {"isim": "Haloperidol",      "atc": "N05AD01", "risk": FallRiskClass.HIGH},
-    {"isim": "Tramadol",         "atc": "N02AX02", "risk": FallRiskClass.HIGH},
-    {"isim": "Gabapentin",       "atc": "N03AX12", "risk": FallRiskClass.HIGH},
-    {"isim": "Digoksin",         "atc": "C01AA05", "risk": FallRiskClass.HIGH},
-    {"isim": "Levotiroksin",     "atc": "H03AA01", "risk": FallRiskClass.LOW},
-    {"isim": "Metoklopramid",    "atc": "A03FA01", "risk": FallRiskClass.MODERATE},
-    {"isim": "Karvedilol",       "atc": "C07AG02", "risk": FallRiskClass.HIGH},
-]
+# ── Sabitler ─────────────────────────────────────────────────
  
 FREKANSLAR = [
     "1x1", "2x1", "3x1", "4x1",
@@ -64,11 +42,72 @@ FREKANSLAR = [
     "ayda 1x", "gerektiğinde",
 ]
  
+DOZAJ_SEKILLERI = [
+    "Tablet", "Kapsül", "Şurup (ml)", "Ampul (mg)",
+    "Patch", "İnhaler", "Damla", "Toz", "Diğer",
+]
+ 
+BIRIMLER = ["mg", "mcg", "g", "ml", "IU", "mEq", "%"]
+ 
+FALLRISK_MAP = {
+    "KRİTİK":    FallRiskClass.CRITICAL,
+    "YÜKSEK":    FallRiskClass.HIGH,
+    "ORTA":      FallRiskClass.MODERATE,
+    "DÜŞÜK":     FallRiskClass.LOW,
+    "Bilinmiyor": FallRiskClass.LOW,   # güvenli varsayılan
+}
+ 
+KRONIK_HASTALIK_LISTESI = [
+    "Hipertansiyon", "Tip 2 DM", "Tip 1 DM",
+    "Kronik Böbrek Hastalığı Evre 1", "Kronik Böbrek Hastalığı Evre 2",
+    "Kronik Böbrek Hastalığı Evre 3a", "Kronik Böbrek Hastalığı Evre 3b",
+    "Kronik Böbrek Hastalığı Evre 4", "Kronik Böbrek Hastalığı Evre 5",
+    "Kalp Yetmezliği (EF<%40)", "Kalp Yetmezliği (EF≥%40)",
+    "Koroner Arter Hastalığı", "Miyokard Enfarktüsü (geçirilmiş)",
+    "Atriyal Fibrilasyon (AF)", "KOAH", "Astım",
+    "Dislipidemi", "Hipotiroidi", "Hipertiroidi",
+    "Osteoporoz", "Osteoartrit", "Romatoid Artrit",
+    "Demans / Alzheimer", "Parkinson",
+    "Depresyon", "Anksiyete Bozukluğu",
+    "Anemi", "Epilepsi", "Kanser (aktif)",
+    "Karaciğer Yetmezliği", "Peptik Ülser",
+    "İnme (geçirilmiş)", "Periferik Arter Hastalığı",
+]
+ 
+ALERJI_LISTESI = [
+    "Penisilin", "Amoksisilin", "Sefalosporin",
+    "Sulfonamid", "Eritromisin", "Tetrasiklin",
+    "NSAID", "Aspirin", "İbuprofen",
+    "Kodein", "Morfin", "Tramadol",
+    "Kontrast Madde", "Lateks",
+]
+ 
+# ── Yardımcı Fonksiyonlar ─────────────────────────────────────
  
 def _ilac_key(pid: int) -> str:
-    """Her hasta için session_state'te ilaç listesi anahtarı."""
     return f"ilac_list_{pid}"
  
+def _hasta_db_key() -> str:
+    return "custom_patients_db"
+ 
+def _get_active_db() -> list:
+    """session_state'teki güncel hasta listesini döndürür."""
+    if _hasta_db_key() not in st.session_state:
+        st.session_state[_hasta_db_key()] = list(PATIENTS_DB)
+    return st.session_state[_hasta_db_key()]
+ 
+def _next_pid() -> int:
+    db = _get_active_db()
+    return max((p.hasta_id for p in db), default=1000) + 1
+ 
+def _get_patient_from_db(pid: int) -> Patient | None:
+    return next((p for p in _get_active_db() if p.hasta_id == pid), None)
+ 
+def _get_patient_options_from_db() -> dict[str, int]:
+    return {
+        f"{p.hasta_id} — {p.ad_soyad} ({p.yas} yaş)": p.hasta_id
+        for p in _get_active_db()
+    }
  
 # ── Session State Güvenlik Ağı ────────────────────────────────
  
@@ -87,17 +126,23 @@ for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
  
+# Hasta DB'sini session_state'e yükle (ilk açılışta)
+_get_active_db()
+ 
 # ── Sidebar ───────────────────────────────────────────────────
  
 with st.sidebar:
     st.markdown("### ⚕️ PharmaSentinel-RX")
     st.markdown("---")
  
-    options = get_patient_options()
-    sel_label = st.selectbox(
-        "Hasta seçin", list(options.keys()), label_visibility="collapsed"
-    )
-    st.session_state.selected_patient_id = options[sel_label]
+    options = _get_patient_options_from_db()
+    if options:
+        sel_label = st.selectbox(
+            "Hasta seçin", list(options.keys()), label_visibility="collapsed"
+        )
+        st.session_state.selected_patient_id = options[sel_label]
+    else:
+        st.warning("Kayıtlı hasta yok.")
  
     st.session_state.risk_filter = st.multiselect(
         "Risk Filtresi",
@@ -122,14 +167,17 @@ with st.sidebar:
 # ── Hesaplamalar ──────────────────────────────────────────────
  
 pid     = st.session_state.selected_patient_id
-patient = get_patient(pid)
+patient = _get_patient_from_db(pid)
  
-# Reçete sekmesinden eklenen ilaçlar session_state'te saklanır;
-# henüz anahtar yoksa hastanın mevcut listesiyle başlat.
+if patient is None:
+    st.error("Hasta bulunamadı. Lütfen sol menüden hasta seçin.")
+    st.stop()
+ 
+# İlaç listesini session_state'e taşı (ilk seferinde)
 if _ilac_key(pid) not in st.session_state:
     st.session_state[_ilac_key(pid)] = list(patient.aktif_ilaclar)
  
-# Analiz her zaman session_state'teki güncel ilaç listesiyle yapılır.
+# ANALİZ DAIMA session_state'teki güncel ilaç listesiyle yapılır
 patient.aktif_ilaclar = st.session_state[_ilac_key(pid)]
  
 pim_hits  = detect_pim(patient)
@@ -184,45 +232,6 @@ with col_card:
     </div>
     """, unsafe_allow_html=True)
     st.caption(f"Son analiz: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
- 
-    # ── Charlson İndeksi Bilgi Kutusu ─────────────────────────
-    with st.expander("ℹ️ Charlson İndeksi nasıl hesaplanır?"):
-        st.markdown("""
-**Charlson Komorbidite İndeksi** — her tanı için puan toplanır:
- 
-| Puan | Tanı / Durum |
-|------|-------------|
-| **1** | Miyokard enfarktüsü, KKY, periferik vasküler hastalık, serebrovasküler hastalık, demans, KOAH, bağ doku hastalığı, peptik ülser, hafif karaciğer hastalığı, diyabet (komplikasyonsuz) |
-| **2** | Diyabet (organ hasarı ile), hemipleji, orta-ağır böbrek hastalığı, solid tümör, lösemi, lenfoma |
-| **3** | Orta-ağır karaciğer hastalığı |
-| **6** | Metastatik solid tümör, AIDS |
- 
-**10 yıllık tahmini mortalite:**
-- 0 puan → %12
-- 1-2 puan → %26
-- 3-4 puan → %52
-- ≥5 puan → %85
-        """)
- 
-    # ── Morse Düşme Skoru Bilgi Kutusu ────────────────────────
-    with st.expander("ℹ️ Morse Düşme Skoru nasıl hesaplanır?"):
-        st.markdown("""
-**Morse Düşme Ölçeği** — 6 kriter toplanır:
- 
-| Puan | Kriter |
-|------|--------|
-| **25** | Düşme öyküsü (son 3 ayda) |
-| **15** | İkincil tanı varlığı |
-| **15** | Yürüme yardımcısı kullanımı (koltuk değneği / walker) |
-| **30** | IV / heparin kilidi |
-| **10** | Yürüyüş / transfer bozukluğu |
-| **15** | Mental durum bozukluğu |
- 
-**Risk sınıflandırması:**
-- 0–24 → Düşük Risk
-- 25–50 → Orta Risk
-- ≥51 → Yüksek Risk
-        """)
  
 with col_metrics:
     m1, m2, m3, m4 = st.columns(4)
@@ -329,8 +338,10 @@ with viz2:
  
     if st.session_state.show_ddi_heatmap:
         st.markdown("#### 🔥 DDI Etkileşim Matrisi")
-        drug_names = [d.isim.split()[0] for d in patient.aktif_ilaclar]
-        drug_atcs  = [d.atc for d in patient.aktif_ilaclar]
+        # Her zaman güncel ilaç listesinden oku
+        aktif = patient.aktif_ilaclar
+        drug_names = [d.isim.split()[0] for d in aktif]
+        drug_atcs  = [d.atc for d in aktif]
         n          = len(drug_names)
         matrix     = np.zeros((n, n))
         sev_score  = {RiskLevel.CRITICAL:3, RiskLevel.HIGH:2,
@@ -362,15 +373,19 @@ with viz2:
  
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
  
-# ── PIM / DDI / İlaçlar / Reçete Sekmeleri ───────────────────
+# ── Sekmeler ──────────────────────────────────────────────────
  
-tab_pim, tab_ddi, tab_drugs, tab_recete = st.tabs([
+tab_pim, tab_ddi, tab_drugs, tab_recete, tab_hasta = st.tabs([
     f"🔴 PIM ({len(pim_f)})",
     f"🟠 DDI ({len(ddi_f)})",
     f"💊 İlaçlar ({len(patient.aktif_ilaclar)})",
     "📋 Reçete Girişi",
+    "👤 Hasta Yönetimi",
 ])
  
+# ════════════════════════════════════════════════════════════
+# SEKME 1 — PIM
+# ════════════════════════════════════════════════════════════
 with tab_pim:
     if not pim_f:
         st.success("✅ Seçili risk filtrelerine göre PIM tespit edilmedi.")
@@ -388,6 +403,9 @@ with tab_pim:
             st.success(hit["oneri"])
             st.caption(f"📚 {hit['kaynak_url']}")
  
+# ════════════════════════════════════════════════════════════
+# SEKME 2 — DDI
+# ════════════════════════════════════════════════════════════
 with tab_ddi:
     if not ddi_f:
         st.success("✅ Seçili risk filtrelerine göre DDI tespit edilmedi.")
@@ -410,6 +428,9 @@ with tab_ddi:
                     st.warning(rule["klinik_sonuc"])
             st.success(rule["yonetim"])
  
+# ════════════════════════════════════════════════════════════
+# SEKME 3 — İlaçlar
+# ════════════════════════════════════════════════════════════
 with tab_drugs:
     fc_colors = {FallRiskClass.CRITICAL: "pim", FallRiskClass.HIGH: "ddi",
                  FallRiskClass.MODERATE: "", FallRiskClass.LOW: ""}
@@ -428,13 +449,13 @@ with tab_drugs:
           &nbsp;|&nbsp; Düşme: <strong>{drug.fall_risk_class.value}</strong>
         </div>""", unsafe_allow_html=True)
  
-# ── Reçete Girişi Sekmesi ─────────────────────────────────────
- 
+# ════════════════════════════════════════════════════════════
+# SEKME 4 — REÇETE GİRİŞİ
+# ════════════════════════════════════════════════════════════
 with tab_recete:
-    st.markdown("#### 📋 Reçete Girişi — İlaç Ekle")
+    st.markdown("#### 📋 Reçete Girişi — İlaç Ekle / Sil")
     st.caption(
-        "Etkin madde adı, dozaj şekli, miktar ve sıklık girerek hastanın "
-        "ilaç listesine ekleyin. Analiz otomatik güncellenir."
+        "Eklenen ilaçlar anında PIM · DDI · CARS™ · PDFI™ analizine dahil edilir."
     )
  
     # ── Satır 1: Etkin madde + ATC ────────────────────────────
@@ -450,57 +471,50 @@ with tab_recete:
             "ATC Kodu (opsiyonel)",
             key="r_atc",
             placeholder="örn: A10BA02",
+            help="Boş bırakabilirsiniz — etkileşim analizi için gerekli değilse XXXX00 atanır.",
         )
  
     # ── Satır 2: Dozaj şekli + miktar + birim ─────────────────
     col_r3, col_r4, col_r5 = st.columns([2, 1, 1])
     with col_r3:
-        r_sekil = st.selectbox(
-            "💉 Dozaj Şekli",
-            ["Tablet", "Kapsül", "Şurup (ml)", "Ampul (mg)",
-             "Patch", "İnhaler", "Damla", "Toz", "Diğer"],
-            key="r_sekil",
-        )
+        r_sekil = st.selectbox("💉 Dozaj Şekli", DOZAJ_SEKILLERI, key="r_sekil")
     with col_r4:
         r_miktar = st.number_input(
-            "Miktar",
-            min_value=0.0,
-            max_value=10000.0,
-            value=0.0,
-            step=0.5,
-            key="r_miktar",
-            help="Sayısal miktar (örn: 500, 2.5)",
+            "Miktar", min_value=0.0, max_value=10000.0,
+            value=0.0, step=0.5, key="r_miktar",
+            help="Sayısal miktar — örn: 500 veya 2.5",
         )
     with col_r5:
-        r_birim = st.selectbox(
-            "Birim",
-            ["mg", "mcg", "g", "ml", "IU", "mEq", "%"],
-            key="r_birim",
-        )
+        r_birim = st.selectbox("Birim", BIRIMLER, key="r_birim")
  
     # ── Satır 3: Sıklık + düşme riski ─────────────────────────
     col_r6, col_r7 = st.columns([2, 2])
     with col_r6:
-        r_frek = st.selectbox(
-            "🔁 Dozlama Sıklığı",
-            FREKANSLAR,
-            key="r_frek",
-        )
+        r_frek = st.selectbox("🔁 Dozlama Sıklığı", FREKANSLAR, key="r_frek")
     with col_r7:
         r_fallrisk = st.selectbox(
             "⚠️ Düşme Riski Sınıfı",
-            ["KRİTİK", "YÜKSEK", "ORTA", "DÜŞÜK"],
-            index=3,
+            ["Bilinmiyor", "DÜŞÜK", "ORTA", "YÜKSEK", "KRİTİK"],
+            index=0,
             key="r_fallrisk",
-            help="İlacın düşme riskine katkısını seçin",
+            help=(
+                "**Bilinmiyor** seçerseniz sistem otomatik olarak DÜŞÜK atar.\n\n"
+                "Kılavuz: Benzodiazepin/hipnotik → KRİTİK · Diüretik → YÜKSEK · "
+                "ACE inhibitörü → ORTA · Statin → DÜŞÜK"
+            ),
         )
  
-    _fallrisk_map = {
-        "KRİTİK": FallRiskClass.CRITICAL,
-        "YÜKSEK": FallRiskClass.HIGH,
-        "ORTA":   FallRiskClass.MODERATE,
-        "DÜŞÜK":  FallRiskClass.LOW,
-    }
+    # Bilinmiyor seçildiğinde açıklama göster
+    if r_fallrisk == "Bilinmiyor":
+        st.info(
+            "ℹ️ Düşme riski bilinmiyor olarak işaretlendi. "
+            "Sistem **DÜŞÜK** riski otomatik atayacak. "
+            "İlaç grubuna göre öneri: \n"
+            "- Benzodiazepin, uyku ilacı, antipsikotik → **KRİTİK**\n"
+            "- Diüretik, antihipertansif → **YÜKSEK**\n"
+            "- ACE inhibitörü, beta bloker → **ORTA**\n"
+            "- Statin, PPI, metformin → **DÜŞÜK**"
+        )
  
     col_ekle, _ = st.columns([1, 3])
     with col_ekle:
@@ -518,16 +532,17 @@ with tab_recete:
                     isim=isim_str,
                     doz=doz_str,
                     frekans=r_frek,
-                    fall_risk_class=_fallrisk_map[r_fallrisk],
+                    fall_risk_class=FALLRISK_MAP[r_fallrisk],
                 )
                 st.session_state[_ilac_key(pid)].append(yeni_ilac)
-                st.success(f"✅ **{isim_str}** — {doz_str}, {r_frek} eklendi!")
+                st.success(f"✅ **{isim_str}** — {doz_str}, {r_frek} eklendi! Analiz güncellendi.")
                 st.rerun()
  
     st.markdown("---")
     st.markdown("##### 📄 Mevcut Reçete")
  
-    if not patient.aktif_ilaclar:
+    aktif = st.session_state[_ilac_key(pid)]
+    if not aktif:
         st.info("ℹ️ Henüz ilaç eklenmedi.")
     else:
         icons_r = {
@@ -536,24 +551,266 @@ with tab_recete:
             FallRiskClass.MODERATE: "🟡",
             FallRiskClass.LOW:      "🟢",
         }
-        if len(patient.aktif_ilaclar) >= 5:
-            st.warning(
-                f"⚠️ **Polifarmasi:** {len(patient.aktif_ilaclar)} ilaç reçetede. "
-                "Dikkatli değerlendirin."
-            )
-        for idx, drug in enumerate(patient.aktif_ilaclar):
+        if len(aktif) >= 5:
+            st.warning(f"⚠️ **Polifarmasi:** {len(aktif)} ilaç reçetede.")
+        for idx, drug in enumerate(aktif):
             ico = icons_r.get(drug.fall_risk_class, "⚪")
             col_info, col_sil = st.columns([6, 1])
             with col_info:
                 st.markdown(
                     f"{ico} **{drug.isim}** &nbsp;·&nbsp; "
                     f"`{drug.doz}` &nbsp;·&nbsp; `{drug.frekans}` &nbsp;·&nbsp; "
-                    f"ATC: `{drug.atc}`"
+                    f"ATC: `{drug.atc}` &nbsp;·&nbsp; "
+                    f"Düşme: **{drug.fall_risk_class.value}**"
                 )
             with col_sil:
-                if st.button("🗑️ Sil", key=f"rsil_{pid}_{idx}"):
+                if st.button("🗑️", key=f"rsil_{pid}_{idx}", help="İlacı sil"):
                     st.session_state[_ilac_key(pid)].pop(idx)
                     st.rerun()
+ 
+# ════════════════════════════════════════════════════════════
+# SEKME 5 — HASTA YÖNETİMİ + CHARLSON/MORSE HESAPLAMA
+# ════════════════════════════════════════════════════════════
+with tab_hasta:
+ 
+    sub_ekle, sub_sil, sub_skorlar = st.tabs([
+        "➕ Yeni Hasta Ekle",
+        "🗑️ Hasta Sil",
+        "🧮 Charlson & Morse Hesaplama",
+    ])
+ 
+    # ── Alt Sekme: Yeni Hasta Ekle ───────────────────────────
+    with sub_ekle:
+        st.markdown("#### 👤 Yeni Hasta Kaydı")
+        st.caption("Formu doldurup **Kaydet** butonuna tıklayın. Hasta listeye anında eklenir.")
+ 
+        he1, he2, he3 = st.columns(3)
+        with he1:
+            f_ad    = st.text_input("Ad Soyad", key="f_ad", placeholder="örn: Ayşe T.")
+            f_yas   = st.number_input("Yaş", min_value=0, max_value=120, value=65, key="f_yas")
+            f_cinsiyet = st.selectbox("Cinsiyet", ["E", "K"], key="f_cinsiyet")
+        with he2:
+            f_kilo  = st.number_input("Kilo (kg)", min_value=1.0, max_value=300.0,
+                                       value=70.0, step=0.5, key="f_kilo")
+            f_egfr  = st.number_input("eGFR (ml/dk/1.73m²)", min_value=0.0,
+                                       max_value=200.0, value=60.0, step=1.0, key="f_egfr")
+            f_albumin = st.number_input("Albumin (g/dL)", min_value=0.0,
+                                         max_value=6.0, value=3.8, step=0.1, key="f_albumin")
+        with he3:
+            # Charlson
+            with st.expander("ℹ️ Charlson İndeksi nasıl hesaplanır?"):
+                st.markdown("""
+**Charlson Komorbidite İndeksi** — her tanı için puan toplanır:
+ 
+| Puan | Tanı / Durum |
+|------|-------------|
+| **1** | MI, KKY, periferik vasküler hastalık, serebrovasküler hastalık, demans, KOAH, bağ doku hastalığı, peptik ülser, hafif KC hastalığı, DM (komplikasyonsuz) |
+| **2** | DM (organ hasarı), hemipleji, orta-ağır böbrek hastalığı, solid tümör, lösemi, lenfoma |
+| **3** | Orta-ağır karaciğer hastalığı |
+| **6** | Metastatik solid tümör, AIDS |
+ 
+**10 yıllık tahmini mortalite:** 0 → %12 · 1-2 → %26 · 3-4 → %52 · ≥5 → %85
+                """)
+            f_charlson = st.number_input("Charlson İndeksi (0–37)",
+                                          min_value=0, max_value=37,
+                                          value=0, key="f_charlson")
+ 
+            # Morse
+            with st.expander("ℹ️ Morse Düşme Skoru nasıl hesaplanır?"):
+                st.markdown("""
+**Morse Düşme Ölçeği** — 6 kriter toplanır:
+ 
+| Puan | Kriter |
+|------|--------|
+| **25** | Düşme öyküsü (son 3 ay) |
+| **15** | İkincil tanı varlığı |
+| **15** | Yürüme yardımcısı (koltuk değneği / walker) |
+| **30** | IV / heparin kilidi |
+| **10** | Yürüyüş / transfer bozukluğu |
+| **15** | Mental durum bozukluğu |
+ 
+**Risk:** 0–24 → Düşük · 25–50 → Orta · ≥51 → Yüksek
+                """)
+            f_morse = st.number_input("Morse Düşme Skoru (0–125)",
+                                       min_value=0, max_value=125,
+                                       value=20, key="f_morse")
+ 
+        f_kronik = st.multiselect(
+            "🏥 Kronik Hastalıklar",
+            KRONIK_HASTALIK_LISTESI,
+            key="f_kronik",
+        )
+        f_alerji = st.multiselect(
+            "⚠️ Alerjiler",
+            ALERJI_LISTESI,
+            key="f_alerji",
+        )
+ 
+        if st.button("💾 Hastayı Kaydet", use_container_width=True, type="primary"):
+            if not f_ad.strip():
+                st.warning("⚠️ Ad Soyad boş bırakılamaz.")
+            else:
+                yeni_pid = _next_pid()
+                yeni_hasta = Patient(
+                    hasta_id=yeni_pid,
+                    ad_soyad=f_ad.strip(),
+                    yas=f_yas,
+                    cinsiyet=f_cinsiyet,
+                    kilo_kg=f_kilo,
+                    egfr=f_egfr,
+                    albumin=f_albumin,
+                    charlson_index=f_charlson,
+                    morse_fall=f_morse,
+                    kronik_hastaliklar=f_kronik if f_kronik else ["Bilinmiyor"],
+                    alerjiler=f_alerji,
+                    aktif_ilaclar=[],
+                )
+                st.session_state[_hasta_db_key()].append(yeni_hasta)
+                st.session_state[_ilac_key(yeni_pid)] = []
+                st.success(
+                    f"✅ **{yeni_hasta.ad_soyad}** (ID: {yeni_pid}) başarıyla eklendi! "
+                    "Sol menüden seçebilirsiniz."
+                )
+                st.rerun()
+ 
+    # ── Alt Sekme: Hasta Sil ─────────────────────────────────
+    with sub_sil:
+        st.markdown("#### 🗑️ Hasta Sil")
+        st.caption("Silme işlemi geri alınamaz. Yalnızca oturum boyunca geçerlidir.")
+ 
+        db = _get_active_db()
+        if not db:
+            st.info("Kayıtlı hasta bulunmuyor.")
+        else:
+            sil_options = {
+                f"{p.hasta_id} — {p.ad_soyad} ({p.yas} yaş)": p.hasta_id
+                for p in db
+            }
+            sil_label = st.selectbox("Silinecek Hastayı Seçin", list(sil_options.keys()),
+                                      key="sil_secim")
+            sil_pid   = sil_options[sil_label]
+            sil_hasta = next(p for p in db if p.hasta_id == sil_pid)
+ 
+            st.warning(
+                f"**{sil_hasta.ad_soyad}** silinecek. "
+                f"Bu hastanın tüm ilaç kaydı da temizlenecektir."
+            )
+            col_sil_btn, _ = st.columns([1, 3])
+            with col_sil_btn:
+                if st.button("⛔ Evet, Hastayı Sil", use_container_width=True):
+                    st.session_state[_hasta_db_key()] = [
+                        p for p in db if p.hasta_id != sil_pid
+                    ]
+                    # İlaç listesini de temizle
+                    key = _ilac_key(sil_pid)
+                    if key in st.session_state:
+                        del st.session_state[key]
+                    # Eğer silinen hasta seçiliyse başka birine geç
+                    remaining = _get_active_db()
+                    if remaining:
+                        st.session_state.selected_patient_id = remaining[0].hasta_id
+                    st.success(f"✅ **{sil_hasta.ad_soyad}** silindi.")
+                    st.rerun()
+ 
+    # ── Alt Sekme: Charlson & Morse Hesaplama ────────────────
+    with sub_skorlar:
+        st.markdown("#### 🧮 Charlson & Morse İnteraktif Hesaplama")
+        st.caption(
+            "Tanıları ve kriterleri işaretleyerek skoru otomatik hesaplayın. "
+            "Bu hesaplama yalnızca bilgilendirme amaçlıdır."
+        )
+ 
+        col_ch, col_mo = st.columns(2)
+ 
+        # ── Charlson Hesaplama ────────────────────────────────
+        with col_ch:
+            st.markdown("##### 📊 Charlson Komorbidite İndeksi")
+ 
+            ch_puan_1 = st.multiselect(
+                "1 Puan — Tanılar",
+                ["Miyokard enfarktüsü", "Konjestif kalp yetmezliği",
+                 "Periferik vasküler hastalık", "Serebrovasküler hastalık",
+                 "Demans", "KOAH", "Bağ doku hastalığı",
+                 "Peptik ülser hastalığı", "Hafif karaciğer hastalığı",
+                 "Diyabet (komplikasyonsuz)"],
+                key="ch1",
+            )
+            ch_puan_2 = st.multiselect(
+                "2 Puan — Tanılar",
+                ["Diyabet (organ hasarı ile)", "Hemipleji/parapleji",
+                 "Orta-ağır böbrek hastalığı", "Solid tümör (metastazsız)",
+                 "Lösemi", "Lenfoma/multipl miyelom"],
+                key="ch2",
+            )
+            ch_puan_3 = st.multiselect(
+                "3 Puan — Tanılar",
+                ["Orta-ağır karaciğer hastalığı"],
+                key="ch3",
+            )
+            ch_puan_6 = st.multiselect(
+                "6 Puan — Tanılar",
+                ["Metastatik solid tümör", "AIDS"],
+                key="ch6",
+            )
+ 
+            ch_toplam = (
+                len(ch_puan_1) * 1 +
+                len(ch_puan_2) * 2 +
+                len(ch_puan_3) * 3 +
+                len(ch_puan_6) * 6
+            )
+            if ch_toplam == 0:
+                ch_renk, ch_yorum = "#66bb6a", "Düşük komorbidite — %12 on yıllık mortalite"
+            elif ch_toplam <= 2:
+                ch_renk, ch_yorum = "#ffa726", "Orta komorbidite — %26 on yıllık mortalite"
+            elif ch_toplam <= 4:
+                ch_renk, ch_yorum = "#ef5350", "Yüksek komorbidite — %52 on yıllık mortalite"
+            else:
+                ch_renk, ch_yorum = "#b71c1c", "Çok yüksek komorbidite — %85 on yıllık mortalite"
+ 
+            st.markdown(
+                f"<div style='background:#1e2736;border-radius:8px;padding:16px;margin-top:8px;'>"
+                f"<span style='font-size:2rem;font-weight:bold;color:{ch_renk}'>{ch_toplam}</span>"
+                f"<span style='color:#b0bec5;'> / 37 puan</span><br>"
+                f"<span style='color:{ch_renk};font-size:0.9rem'>{ch_yorum}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+ 
+        # ── Morse Hesaplama ───────────────────────────────────
+        with col_mo:
+            st.markdown("##### 🚶 Morse Düşme Ölçeği")
+ 
+            mo_dusme  = st.checkbox("Düşme öyküsü var (son 3 ay) — **+25 puan**", key="mo1")
+            mo_ikinci = st.checkbox("İkincil tanı var — **+15 puan**", key="mo2")
+            mo_yurume = st.checkbox("Yürüme yardımcısı kullanıyor — **+15 puan**", key="mo3")
+            mo_iv     = st.checkbox("IV / heparin kilidi var — **+30 puan**", key="mo4")
+            mo_yuruy  = st.checkbox("Yürüyüş / transfer bozukluğu — **+10 puan**", key="mo5")
+            mo_mental = st.checkbox("Mental durum bozukluğu — **+15 puan**", key="mo6")
+ 
+            mo_toplam = (
+                (25 if mo_dusme  else 0) +
+                (15 if mo_ikinci else 0) +
+                (15 if mo_yurume else 0) +
+                (30 if mo_iv     else 0) +
+                (10 if mo_yuruy  else 0) +
+                (15 if mo_mental else 0)
+            )
+            if mo_toplam < 25:
+                mo_renk, mo_yorum = "#66bb6a", "DÜŞÜK risk — standart önlemler yeterli"
+            elif mo_toplam <= 50:
+                mo_renk, mo_yorum = "#ffa726", "ORTA risk — düşme önleme protokolü başlatın"
+            else:
+                mo_renk, mo_yorum = "#ef5350", "YÜKSEK risk — yoğun önleme + sürekli gözlem"
+ 
+            st.markdown(
+                f"<div style='background:#1e2736;border-radius:8px;padding:16px;margin-top:8px;'>"
+                f"<span style='font-size:2rem;font-weight:bold;color:{mo_renk}'>{mo_toplam}</span>"
+                f"<span style='color:#b0bec5;'> / 125 puan</span><br>"
+                f"<span style='color:{mo_renk};font-size:0.9rem'>{mo_yorum}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
  
 st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
  
@@ -637,41 +894,44 @@ st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 # ── Kohort Scatter ────────────────────────────────────────────
  
 st.markdown("### 📊 Tüm Hasta Kohort Risk Haritası")
-cohort    = build_cohort_summary(PATIENTS_DB)
+cohort    = build_cohort_summary(_get_active_db())
 cohort_df = pd.DataFrame(cohort)
-sel_row   = cohort_df[cohort_df["hasta_id"] == st.session_state.selected_patient_id].iloc[0]
  
-fig_s = px.scatter(
-    cohort_df, x="CARS™ Skoru", y="PDFI™ Skoru", size="PIM Sayısı",
-    color="Risk Seviyesi",
-    color_discrete_map={"KRİTİK":"#ef5350","YÜKSEK":"#ffa726",
-                        "ORTA":"#ffee58","DÜŞÜK":"#66bb6a"},
-    hover_name="Hasta",
-    hover_data={"Yaş":True,"DDI Sayısı":True,"hasta_id":False},
-    title="Kohort: CARS™ vs PDFI™ (Bubble = PIM Yükü)",
-    size_max=35,
-)
-fig_s.add_annotation(
-    x=sel_row["CARS™ Skoru"], y=sel_row["PDFI™ Skoru"],
-    text=f"◀ {sel_row['Hasta']}",
-    showarrow=True, arrowhead=2, arrowcolor="#ff9800",
-    font=dict(color="#ff9800", size=11), bgcolor="#1e2736",
-    bordercolor="#ff9800", borderwidth=1,
-)
-fig_s.update_layout(
-    paper_bgcolor="#0f1117", plot_bgcolor="#1e2736",
-    font_color="#b0bec5", height=380,
-    margin=dict(t=50,b=30,l=30,r=30),
-    xaxis=dict(title="CARS™ (0-100)", gridcolor="#263548", range=[0,105]),
-    yaxis=dict(title="PDFI™ (0-100)", gridcolor="#263548", range=[0,105]),
-    legend=dict(bgcolor="#1e2736", bordercolor="#263548", borderwidth=1),
-)
-st.plotly_chart(fig_s, use_container_width=True)
-crit_cnt = sum(1 for r in cohort if r["Risk Seviyesi"] == "KRİTİK")
-high_cnt = sum(1 for r in cohort if r["Risk Seviyesi"] == "YÜKSEK")
-st.caption(f"Kohort: {len(PATIENTS_DB)} hasta · KRİTİK: {crit_cnt} · YÜKSEK: {high_cnt}")
+if not cohort_df.empty and pid in cohort_df["hasta_id"].values:
+    sel_row = cohort_df[cohort_df["hasta_id"] == pid].iloc[0]
+ 
+    fig_s = px.scatter(
+        cohort_df, x="CARS™ Skoru", y="PDFI™ Skoru", size="PIM Sayısı",
+        color="Risk Seviyesi",
+        color_discrete_map={"KRİTİK":"#ef5350","YÜKSEK":"#ffa726",
+                            "ORTA":"#ffee58","DÜŞÜK":"#66bb6a"},
+        hover_name="Hasta",
+        hover_data={"Yaş":True,"DDI Sayısı":True,"hasta_id":False},
+        title="Kohort: CARS™ vs PDFI™ (Bubble = PIM Yükü)",
+        size_max=35,
+    )
+    fig_s.add_annotation(
+        x=sel_row["CARS™ Skoru"], y=sel_row["PDFI™ Skoru"],
+        text=f"◀ {sel_row['Hasta']}",
+        showarrow=True, arrowhead=2, arrowcolor="#ff9800",
+        font=dict(color="#ff9800", size=11), bgcolor="#1e2736",
+        bordercolor="#ff9800", borderwidth=1,
+    )
+    fig_s.update_layout(
+        paper_bgcolor="#0f1117", plot_bgcolor="#1e2736",
+        font_color="#b0bec5", height=380,
+        margin=dict(t=50,b=30,l=30,r=30),
+        xaxis=dict(title="CARS™ (0-100)", gridcolor="#263548", range=[0,105]),
+        yaxis=dict(title="PDFI™ (0-100)", gridcolor="#263548", range=[0,105]),
+        legend=dict(bgcolor="#1e2736", bordercolor="#263548", borderwidth=1),
+    )
+    st.plotly_chart(fig_s, use_container_width=True)
+    crit_cnt = sum(1 for r in cohort if r["Risk Seviyesi"] == "KRİTİK")
+    high_cnt = sum(1 for r in cohort if r["Risk Seviyesi"] == "YÜKSEK")
+    st.caption(f"Kohort: {len(_get_active_db())} hasta · KRİTİK: {crit_cnt} · YÜKSEK: {high_cnt}")
  
 st.markdown("""
 <div class="footer-text">
   PharmaSentinel-RX v1.0.0 · Beers 2023 · STOPP/START v3 · FDA AI/ML SaMD
 </div>""", unsafe_allow_html=True)
+ 
