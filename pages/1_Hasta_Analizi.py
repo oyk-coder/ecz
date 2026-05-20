@@ -1,4 +1,5 @@
 bash
+
 cat > /mnt/user-data/outputs/1_Hasta_Analizi.py << 'ENDOFFILE'
 import logging
 from datetime import datetime
