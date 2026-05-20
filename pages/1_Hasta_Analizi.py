@@ -1,3 +1,43 @@
+# Sidebar'da mevcut hasta seçiminin ALTINA ekle:
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ➕ Yeni Hasta Ekle")
+
+with st.sidebar.expander("Hasta Formu Aç"):
+    yeni_ad       = st.text_input("Ad Soyad *")
+    yeni_yas      = st.number_input("Yaş *", 18, 110, 70)
+    yeni_cinsiyet = st.selectbox("Cinsiyet", ["E", "K"])
+    yeni_egfr     = st.number_input("eGFR (ml/dk) *", 0.0, 200.0, 60.0)
+    yeni_albumin  = st.number_input("Albumin (g/dL) *", 0.0, 10.0, 4.0)
+    yeni_charlson = st.number_input("Charlson İndeksi *", 0, 37, 0)
+    yeni_morse    = st.number_input("Morse Düşme Skoru *", 0, 125, 20)
+    yeni_tanilar  = st.text_input("Tanılar (virgülle)", "")
+    yeni_alerjiler= st.text_input("Alerjiler (virgülle)", "")
+
+    if st.button("✅ Kaydet"):
+        if not yeni_ad:
+            st.error("Ad soyad zorunlu.")
+        else:
+            from data_utils import Patient, Medication
+            yeni_hasta = Patient(
+                hasta_id    = 9000 + len(st.session_state.get("ek_hastalar",[])),
+                ad_soyad    = yeni_ad,
+                yas         = yeni_yas,
+                cinsiyet    = yeni_cinsiyet,
+                kilo_kg     = 70.0,
+                egfr        = yeni_egfr,
+                albumin     = yeni_albumin,
+                charlson_index = yeni_charlson,
+                morse_fall  = yeni_morse,
+                kronik_hastaliklar = [t.strip() for t in yeni_tanilar.split(",") if t.strip()],
+                alerjiler   = [a.strip() for a in yeni_alerjiler.split(",") if a.strip()],
+                aktif_ilaclar = [],
+            )
+            if "ek_hastalar" not in st.session_state:
+                st.session_state.ek_hastalar = []
+            st.session_state.ek_hastalar.append(yeni_hasta)
+            st.success(f"{yeni_ad} eklendi!")
+            st.rerun()
 # ============================================================
 # pages/1_Hasta_Analizi.py — Hasta Analiz & Karar Destek
 # ============================================================
@@ -23,7 +63,11 @@ from clinical_logic import (
 )
 from data_utils import (
     FallRiskClass,
-    PATIENTS_DB,
+    from data_utils import PATIENTS_DB, get_patient_options
+
+# Sayfanın başında, hasta listesini genişlet:
+tum_hastalar = PATIENTS_DB + st.session_state.get("ek_hastalar", [])
+
     RiskLevel,
     get_patient,
     get_patient_options,
